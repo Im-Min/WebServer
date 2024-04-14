@@ -15,8 +15,10 @@
 
 void* handle_connection(void* socket);
 void updateBackgroundColor(std::string& htmlContent, const std::string& newColor);
+void updateName(std::string& htmlContent, const std::string& name);
 std::string readHtmlFile(std::string file_path);
 std::string generateRandomColor();
+std::string extractData(const std::string& request);
 
 struct SocketData {
     int socket;
@@ -77,9 +79,6 @@ int main() {
         std::string client_html = html_content;
         updateBackgroundColor(client_html, color);
 
-        std::cout << client_html <<"\n";
-
-
         SocketData* data = new SocketData;
         data->socket = client_socket;
         data->pageData = client_html;
@@ -101,29 +100,56 @@ int main() {
 
 
 void* handle_connection(void* socket) {
+
     SocketData* data = static_cast<SocketData*>(socket);
     int sock = data->socket;
     std::string page_html = data->pageData;
     char buffer[3000] = {0};
-
-    long valread = read(sock, buffer, 3000);
-    std::string request(buffer);
-
-    size_t method_end = request.find(" ");
-    size_t path_end = request.find(" ", method_end + 1);
-    std::string method = request.substr(0, method_end);
-    std::string path = request.substr(method_end + 1, path_end - method_end - 1);
     
-    std::cout << "Method: " << method << "\n";
-    std::cout << "Path: " << path << "\n";
+    while (true) {
+        memset(buffer, 0, sizeof(buffer));
+        long valread = read(sock, buffer, 3000);
 
-    std::string content_length = std::to_string(page_html.length());
+        if (valread <= 0) {  // 클라이언트가 연결을 닫거나 읽기 오류 발생
+            std::cerr << (valread == 0 ? "Client disconnected.\n" : "Read error.\n");
+            break;
+        }
 
-    std::string response = "HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: " + content_length + "\n\n" + page_html;
+        std::string request(buffer);
+        size_t method_end = request.find(" ");
+        size_t path_end = request.find(" ", method_end + 1);
+        std::string method = request.substr(0, method_end);
+        std::string path = request.substr(method_end + 1, path_end - method_end - 1);
 
-    write(sock, response.c_str(), response.length());
+
+        std::cout << "Method: " << method << "\n" << "Path: " << path << "\n";
+
+        std::string content_length = std::to_string(page_html.length());
+        std::string response = "HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: " + content_length + "\n\n" + page_html;
+
+        if (request.find("Connection: keep-alive") != std::string::npos) {
+            response.insert(response.find("\n") + 1, "Connection: keep-alive\n");
+        } 
+        else {
+            response.insert(response.find("\n") + 1, "Connection: close\n");
+            write(sock, response.c_str(), response.length());
+            break;
+        }
+
+        if (method == "GET") {
+            write(sock, response.c_str(), response.length());
+        } 
+        else if (method == "POST") {
+            std::string name = extractData(request);
+            updateName(response, name);
+            std::cout << response <<"\n";
+
+            write(sock, response.c_str(), response.length());
+        }
+
+    }
+
     close(sock);
-
     delete data;
 
     return NULL;
@@ -158,6 +184,16 @@ void updateBackgroundColor(std::string& htmlContent, const std::string& newColor
     }
 }
 
+void updateName(std::string& htmlContent, const std::string& name) {
+    std::string search_string = "<h3>visitors</h3>";
+    std::string name_string = "<p>"+name+"</p>";
+    size_t start = htmlContent.find(search_string);
+
+    if (start != std::string::npos) {
+        htmlContent.insert(start + search_string.length(), name_string);
+    }
+}
+
 std::string generateRandomColor() {
     std::stringstream color;
 
@@ -170,4 +206,12 @@ std::string generateRandomColor() {
     color << "#" << std::hex << std::setfill('0') << std::setw(2) << red << std::setw(2) << green << std::setw(2) << blue;
     
     return color.str();
+}
+
+std::string extractData(const std::string& request) {
+    size_t start = request.find("name=");
+    size_t end = request.find("0", start);
+    if (end == std::string::npos) end = request.length();
+    std::string name = request.substr(start + 5, end - (start + 5));
+    return name;
 }
